@@ -1,0 +1,10 @@
+#!/usr/bin/env ruby
+
+# typed: true
+
+require "timing_runner"
+
+config = TimingRunner::Config.load!
+runner = TimingRunner::Runner.new(config)
+
+runner.run
