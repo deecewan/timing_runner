@@ -8,11 +8,19 @@ module TimingRunner
 
     const :name, String
     const :time, Float
-    prop :location, T.nilable(String), default: nil
+    prop :file, T.nilable(String)
+    prop :line, T.nilable(Integer)
+    prop :id, T.nilable(String)
 
     sig { params(name: String, time: Float).returns(T.attached_class) }
     def self.for(name, time)
       new(name:, time:)
+    end
+
+    sig { returns(String) }
+
+    def location
+      "#{T.must(file)}:#{T.must(line)}"
     end
   end
 
@@ -48,15 +56,14 @@ module TimingRunner
         end
         if time.include?(SEPERATOR)
           raise CorruptedDataError,
-            "line #{line_no} has too many seperators: #{
-            line.gsub(SEPERATOR, "<SEP>")}"
+            "line #{line_no} has too many seperators: #{line.gsub(SEPERATOR, "<SEP>")}"
         end
         time = begin
-          Float(time)
-        rescue ArgumentError
-          raise CorruptedDataError,
-            "`time` is not a valid float: #{time}. line #{line_no}: #{line}"
-        end
+            Float(time)
+          rescue ArgumentError
+            raise CorruptedDataError,
+              "`time` is not a valid float: #{time}. line #{line_no}: #{line}"
+          end
 
         Timing.for(name, time)
       end
@@ -65,6 +72,7 @@ module TimingRunner
     end
 
     sig { params(file: File, lock: T::Boolean).void }
+
     def dump_to_file(file, lock: false)
       begin
         file.flock File::LOCK_EX if lock
@@ -75,11 +83,13 @@ module TimingRunner
     end
 
     sig { returns(String) }
+
     def dump
       timings.map { [_1.name, SEPERATOR, _1.time].join("") }.join("\n")
     end
 
     sig { params(timing: Timing).void }
+
     def add(timing)
       timings.push(timing)
     end

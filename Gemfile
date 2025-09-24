@@ -9,9 +9,14 @@ gem "rake", "~> 13.0"
 
 gem "rspec", "~> 3.0"
 
-gem "rubocop", "~> 1.21"
+gem "rubocop"
+
+gem "rufo"
 
 gem "pry-byebug"
 
 gem "sorbet"
 gem "tapioca", require: false
+gem "benchmark"
+
+gem "rubocop-sorbet", require: false

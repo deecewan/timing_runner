@@ -1,34 +1,76 @@
-# TimingRunner
+# timing-runner
 
-TODO: Delete this and the text below, and describe your gem
+Please read this fully before using the gem.
 
-Welcome to your new gem! In this directory, you'll find the files you need to be able to package up your Ruby library into a gem. Put your Ruby code in the file `lib/timing_runner`. To experiment with that code, run `bin/console` for an interactive prompt.
+## Setup
 
-## Installation
+- Add the following to your `.rspec` file
 
-TODO: Replace `UPDATE_WITH_YOUR_GEM_NAME_PRIOR_TO_RELEASE_TO_RUBYGEMS_ORG` with your gem name right after releasing it to RubyGems.org. Please do not do it earlier due to security reasons. Alternatively, replace this section with instructions to install your gem from git if you don't plan to release to RubyGems.org.
+```
+--require timing_runner
+--format TimingRunner::Logger --out <file>
+```
 
-Install the gem and add to the application's Gemfile by executing:
+where `<file>` is the path to the file where you want the timing results to be
+logged.
 
-    $ bundle add UPDATE_WITH_YOUR_GEM_NAME_PRIOR_TO_RELEASE_TO_RUBYGEMS_ORG
+## Running Tests
 
-If bundler is not being used to manage dependencies, install the gem by executing:
+Run tests with
 
-    $ gem install UPDATE_WITH_YOUR_GEM_NAME_PRIOR_TO_RELEASE_TO_RUBYGEMS_ORG
+```
+bundle exec timing-runner <timing runner options> -- <rspec options>
+```
 
-## Usage
+`<rspec options>` is any option you'd usually pass to rspec on the command line.
+See [Configuration](#configuration) for the options you can pass for
+`<timing runner options>`.
 
-TODO: Write usage instructions here
+The runner will read from `input-file` to get the timing data.
 
-## Development
+> [!WARNING]
+> You must not use the same location for `input-file` and the output file
+> specified in `.rspec`! RSpec truncates that file, so you will lose your timing
+> data
 
-After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake spec` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
+## Configuration
 
-To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and the created tag, and push the `.gem` file to [rubygems.org](https://rubygems.org).
+Check the options with `bundle exec timing-runner --help`.
 
-## Contributing
+### Options
 
-Bug reports and pull requests are welcome on GitHub at https://github.com/[USERNAME]/timing_runner.
+- `--input-file <file>`: The file where timings should be read from (required)
+- `--num-runners <number>`: The number of parallel runners to use (required)
+- `--runner <number`>: The index of the runner to use (required)
+- `--dry-run`: If set, the tests will not be executed. The program will print
+the command it _would_ run, and exit (optional)
+
+Options can be specified on the command line or in a configuration file.
+
+The configuration file is similar to the `.rspec` file. It lives at
+`.timing-runner`. Put each command line option on a new line. Be sure to use the
+same syntax as in the command line, e.g. `--input-file <file>`.
+
+Alternatively, you can use environment variables to set the options. The format
+for the environment variables is `TIMING_RUNNER_<option>`, where `<option>` is
+upper case, and underscores are used instead of dashes. For example, to set the
+`--input-file` option, you would use `TIMING_RUNNER_INPUT_FILE=<file>`.
+
+To see debug output from the configuration parsing (i.e. see the configuration
+result, see the source of the options) you can specify `--debug` on the command
+line or the configuration file, or set the environment variable
+`TIMING_RUNNER_DEBUG=true`.
+
+Order of precedence for options is as follows:
+1. Command line options
+2. Environment variables
+3. Configuration file
+
+## Timing Files
+
+The timing files are simple text files with one line per test. When running
+across different agents, simply combine the timing files from all agents, and
+then specify the combined file as the `--input-file` option.
 
 ## License
 

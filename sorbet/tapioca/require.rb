@@ -1,4 +1,11 @@
 # typed: true
 # frozen_string_literal: true
 
-# Add your extra requires here (`bin/tapioca require` can be used to bootstrap this list)
+require "benchmark"
+require "open3"
+require "optparse"
+require "pry"
+require "rspec"
+require "rspec/core/formatters/base_formatter"
+require "sorbet-runtime"
+require "colorize"

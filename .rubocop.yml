@@ -1,3 +1,6 @@
+plugins:
+  - rubocop-sorbet
+
 AllCops:
   TargetRubyVersion: 3.2
   NewCops: enable
@@ -6,23 +9,9 @@ AllCops:
     - "bin/**/*"
   Include:
     - "bin/runner"
+  DisabledByDefault: true
 
-Style:
-  Enabled: false
-
-Style/StringLiterals:
+Lint:
   Enabled: true
-  EnforcedStyle: double_quotes
-
-Style/StringLiteralsInInterpolation:
+Sorbet:
   Enabled: true
-  EnforcedStyle: double_quotes
-
-Layout/LineLength:
-  Max: 80
-
-Metrics/BlockLength:
-  Enabled: false
-
-Metrics/MethodLength:
-  Enabled: false

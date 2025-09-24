@@ -3,6 +3,17 @@
 require "open3"
 require "rspec"
 
+def bm(label)
+  return yield unless ENV["BENCHMARK"]
+
+  require "benchmark"
+  res = Benchmark.measure do
+    yield
+  end
+
+  puts "#{label}: #{res.real}"
+end
+
 module TimingRunner
   class Runner
     extend T::Sig
@@ -19,20 +30,29 @@ module TimingRunner
     sig { params(config: Config).void }
     def initialize(config)
       @config = config
-      @without_timing = []
       @timing_hash = T.let({}, T::Hash[String, Timing])
 
-      initialize_timings(config.input_file)
+      bm("initialize_timings") do
+        initialize_timings(config.input_file)
+      end
 
-      load_spec_files
+      bm("load_spec_files") do
+        load_spec_files
+      end
 
-      add_location_to_timings
+      bm("add_location_to_timings") do
+        add_location_to_timings
+      end
 
-      validate_timings
+      bm("validate_timings") do
+        validate_timings
+      end
 
-      @partitioner = Partitioner.new(
-        timing_hash.values, config.num_runners
-      )
+      bm("Partitioner.new") do
+        @partitioner = Partitioner.new(
+          timing_hash.values, config.num_runners
+        )
+      end
     end
 
     sig { void }
@@ -45,14 +65,17 @@ module TimingRunner
         puts "Dry run requested:"
 
         puts <<~EOF
-        Would run
-          #{cmd}
+               Would run
+                 #{cmd}
 
-          Length: #{cmd.length}
-        EOF
+                 Length: #{cmd.length}
+             EOF
 
         return
       end
+
+      # TODO: maybe we can run RSpec directly instead of shelling out? I tried
+      # it once but it ended up running all the specs twice and i'm not sure why
 
       stdin, stdout, stderr, wait_thr = Open3.popen3(cmd)
       stdin.close
@@ -65,28 +88,29 @@ module TimingRunner
 
     sig { params(runner: Integer).returns(T::Array[String]) }
     def files_for(runner)
-      partitioner.partition_for_group(runner).map { |t| T.must(t.location) }
+      partition = partitioner.partition_for_group(runner)
+      partition.group_by { |timing| T.must(timing.file) }.map do |(file_name, timings)|
+        lines = timings.map { _1.id }
+        "'#{file_name}[#{lines.join(",")}]'"
+      end
     end
 
     private
 
     sig { params(timings_file: String).void }
     def initialize_timings(timings_file)
-      @to_remove = []
-
       timings = T.let(Timings.parse_from_file(timings_file), Timings)
 
       timings.timings.each do |timing|
-        if @timing_hash[timing.name].nil?
+        existing_timing = @timing_hash[timing.name]
+
+        if existing_timing.nil?
           @timing_hash[timing.name] = timing
         else
-          warn "Duplicate timing found for #{timing.name} - ignoring"
-          @to_remove << timing.name
+          biggest = T.must([existing_timing, timing].max_by { |t| t.time })
+          warn "Duplicate timing found for #{timing.name} - choosing the biggest"
+          @timing_hash[timing.name] = biggest
         end
-      end
-
-      @to_remove.each do |to_remove|
-        @timing_hash.delete(to_remove)
       end
     end
 
@@ -101,28 +125,35 @@ module TimingRunner
       @average_time
     end
 
+    sig { void }
     def add_location_to_timings
       RSpec.world.example_groups.map do |group|
-        group.examples.each do |example|
+        group.descendants.map { _1.examples }.flatten.each do |example|
+          # group.descendant_filtered_examples.each do |example|
           timing = timing_hash[example.full_description]
           if timing.nil?
-            @without_timing << example
             timing_hash[example.full_description] =
               # we initialize these with an average time so that they get grouped
               # into new groups evenly
               Timing.new(
                 name: example.full_description,
                 time: average_time,
-                location: example.location,
+                file: example.metadata[:rerun_file_path],
+                line: example.metadata[:line_number],
+                id: example.metadata[:scoped_id],
               )
           else
-            timing.location = example.location
+            timing.file = example.metadata[:rerun_file_path]
+            timing.line = example.metadata[:line_number]
+            timing.id = example.metadata[:scoped_id]
           end
         end
       end
     end
 
+    sig { void }
     def load_spec_files
+      require "pry"; binding.pry
       config = RSpec.configuration
       options = RSpec::Core::ConfigurationOptions.new([])
       options.configure(config)
@@ -131,9 +162,10 @@ module TimingRunner
       config.load_spec_files
     end
 
+    sig { void }
     def validate_timings
       @timing_hash.delete_if do |name, timing|
-        if timing.location.nil?
+        if timing.file.nil?
           warn "No location found for test '#{name}' - removing as stale"
           true
         else

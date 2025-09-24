@@ -12,7 +12,7 @@ module TimingRunner
     extend T::Sig
 
     RSpec::Core::Formatters.register(self, :start, :example_passed, :start_dump,
-      :close)
+                                     :close)
 
     private
 
@@ -28,11 +28,12 @@ module TimingRunner
     sig do
       params(notification: RSpec::Core::Notifications::ExampleNotification).void
     end
+
     def example_passed(notification)
       example = notification.example
 
       timing = Timing.for(example.full_description,
-        example.execution_result.run_time)
+                          example.execution_result.run_time)
 
       timings.add(timing)
     end
