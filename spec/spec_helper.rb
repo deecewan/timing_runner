@@ -1,7 +1,10 @@
 # frozen_string_literal: true
 
 require "pry"
+require "rspec/sorbet"
 require "timing_runner"
+
+RSpec::Sorbet.allow_doubles!
 
 RSpec.configure do |config|
   # Enable flags like --only-failures and --next-failure

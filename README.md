@@ -4,6 +4,8 @@ Please read this fully before using the gem.
 
 ## Setup
 
+- For local development, install the project toolchain with `mise install`, then run
+  `bundle install`.
 - Add the following to your `.rspec` file
 
 ```
@@ -71,6 +73,22 @@ Order of precedence for options is as follows:
 The timing files are simple text files with one line per test. When running
 across different agents, simply combine the timing files from all agents, and
 then specify the combined file as the `--input-file` option.
+
+Timing Runner matches timings by example name. It prefers an exact
+`full_description` match, then falls back to a normalized stable key for names
+that include volatile Ruby object ids such as `#<Object:0x...>`.
+
+If you have highly dynamic example names and want to pin them to a stable
+identity yourself, add `timing_runner_key:` metadata:
+
+```ruby
+it("serializes #{user}", timing_runner_key: "serializes-user") do
+  expect(serializer.call(user)).to eq(...)
+end
+```
+
+That metadata is only used as the persisted timing identity. The actual test
+selection for the current run still uses RSpec's current `scoped_id`s.
 
 ## License
 

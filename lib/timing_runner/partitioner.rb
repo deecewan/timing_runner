@@ -39,8 +39,8 @@ module TimingRunner
     sig { params(timings: TimingArray).returns(NestedTimings) }
 
     def create_groups(timings)
-      # sort first so we get a stable order
-      sorted = timings.sort_by { |t| [-1 * t.time, t.location] }
+      # sort first so we get a stable order that does not depend on file line numbers
+      sorted = timings.sort_by { |t| [-1 * t.time, *t.sort_key] }
 
       # create the partitions we're going to temporarily store the data in
       partitions = T.let(Array.new(@num_groups) do

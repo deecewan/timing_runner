@@ -32,8 +32,11 @@ module TimingRunner
     def example_passed(notification)
       example = notification.example
 
-      timing = Timing.for(example.full_description,
-                          example.execution_result.run_time)
+      timing = Timing.for(
+        example.full_description,
+        example.execution_result.run_time,
+        stable_key: Identity.for_example(example)
+      )
 
       timings.add(timing)
     end

@@ -17,6 +17,7 @@ end
 module TimingRunner
   class Runner
     extend T::Sig
+    SelectorNode = T.type_alias { T::Hash[Symbol, T.untyped] }
 
     sig { returns(T::Hash[String, Timing]) }
     attr_accessor :timing_hash
@@ -31,6 +32,11 @@ module TimingRunner
     def initialize(config)
       @config = config
       @timing_hash = T.let({}, T::Hash[String, Timing])
+      @loaded_timing_hash = T.let({}, T::Hash[String, Timing])
+      @stable_timing_hash = T.let(
+        Hash.new { |hash, key| hash[key] = [] },
+        T::Hash[String, T::Array[Timing]]
+      )
 
       bm("initialize_timings") do
         initialize_timings(config.input_file)
@@ -59,7 +65,9 @@ module TimingRunner
     def run
       files = files_for(config.runner)
 
-      cmd = ["bundle exec rspec", config.rspec_args, files].compact.join(" ")
+      cmd = ["bundle exec rspec", *Array(config.rspec_args), *files]
+        .reject { |part| part.nil? || part.empty? }
+        .join(" ")
 
       if config.dry_run
         puts "Dry run requested:"
@@ -89,9 +97,19 @@ module TimingRunner
     sig { params(runner: Integer).returns(T::Array[String]) }
     def files_for(runner)
       partition = partitioner.partition_for_group(runner)
-      partition.group_by { |timing| T.must(timing.file) }.map do |(file_name, timings)|
-        lines = timings.map { _1.id }
-        "'#{file_name}[#{lines.join(",")}]'"
+      all_timings_by_file = timing_hash.values.group_by { T.must(_1.file) }
+
+      partition.group_by { |timing| T.must(timing.file) }.sort_by(&:first).map do |(file_name, timings)|
+        selectors = compact_selectors_for_file(
+          timings.map { T.must(_1.id) },
+          T.must(all_timings_by_file[file_name]).map { T.must(_1.id) }
+        )
+
+        if selectors.empty?
+          "'#{file_name}'"
+        else
+          "'#{file_name}[#{selectors.join(",")}]'"
+        end
       end
     end
 
@@ -102,15 +120,19 @@ module TimingRunner
       timings = T.let(Timings.parse_from_file(timings_file), Timings)
 
       timings.timings.each do |timing|
-        existing_timing = @timing_hash[timing.name]
+        existing_timing = @loaded_timing_hash[timing.name]
 
         if existing_timing.nil?
-          @timing_hash[timing.name] = timing
+          @loaded_timing_hash[timing.name] = timing
         else
           biggest = T.must([existing_timing, timing].max_by { |t| t.time })
           warn "Duplicate timing found for #{timing.name} - choosing the biggest"
-          @timing_hash[timing.name] = biggest
+          @loaded_timing_hash[timing.name] = biggest
         end
+      end
+
+      @loaded_timing_hash.each_value do |timing|
+        @stable_timing_hash[timing.identity] << timing
       end
     end
 
@@ -118,7 +140,7 @@ module TimingRunner
     def average_time
       return @average_time if defined?(@average_time)
 
-      @average_time = timing_hash.values.sum(&:time).to_f / timing_hash.values.length
+      @average_time = @loaded_timing_hash.values.sum(&:time).to_f / @loaded_timing_hash.values.length
       # we need this to be slightly above 0 so that `array.min` returns different values
       @average_time = 0.0001 if @average_time.nan?
 
@@ -129,31 +151,13 @@ module TimingRunner
     def add_location_to_timings
       RSpec.world.example_groups.map do |group|
         group.descendants.map { _1.examples }.flatten.each do |example|
-          # group.descendant_filtered_examples.each do |example|
-          timing = timing_hash[example.full_description]
-          if timing.nil?
-            timing_hash[example.full_description] =
-              # we initialize these with an average time so that they get grouped
-              # into new groups evenly
-              Timing.new(
-                name: example.full_description,
-                time: average_time,
-                file: example.metadata[:rerun_file_path],
-                line: example.metadata[:line_number],
-                id: example.metadata[:scoped_id],
-              )
-          else
-            timing.file = example.metadata[:rerun_file_path]
-            timing.line = example.metadata[:line_number]
-            timing.id = example.metadata[:scoped_id]
-          end
+          timing_hash[example.full_description] = timing_for_example(example)
         end
       end
     end
 
     sig { void }
     def load_spec_files
-      require "pry"; binding.pry
       config = RSpec.configuration
       options = RSpec::Core::ConfigurationOptions.new([])
       options.configure(config)
@@ -164,6 +168,12 @@ module TimingRunner
 
     sig { void }
     def validate_timings
+      @loaded_timing_hash.each_value do |timing|
+        warn "No location found for test '#{timing.name}' - removing as stale"
+      end
+      @loaded_timing_hash.clear
+      @stable_timing_hash.clear
+
       @timing_hash.delete_if do |name, timing|
         if timing.file.nil?
           warn "No location found for test '#{name}' - removing as stale"
@@ -172,6 +182,126 @@ module TimingRunner
           false
         end
       end
+    end
+
+    sig { params(example: T.untyped).returns(Timing) }
+    def timing_for_example(example)
+      historical_timing = historical_timing_for(example)
+      metadata = example.metadata
+
+      Timing.for(
+        example.full_description,
+        historical_timing&.time || average_time,
+        stable_key: Identity.for_example(example)
+      ).tap do |timing|
+        timing.file = metadata[:rerun_file_path]
+        timing.line = metadata[:line_number]
+        timing.id = metadata[:scoped_id]
+      end
+    end
+
+    sig { params(example: T.untyped).returns(T.nilable(Timing)) }
+    def historical_timing_for(example)
+      exact_timing = @loaded_timing_hash[example.full_description]
+      return consume_timing(exact_timing) unless exact_timing.nil?
+
+      stable_key = Identity.for_example(example)
+      stable_matches = @stable_timing_hash.fetch(stable_key, [])
+
+      case stable_matches.length
+      when 0
+        nil
+      when 1
+        consume_timing(T.must(stable_matches.first))
+      else
+        warn "Ambiguous normalized timing key for '#{example.full_description}' - falling back to average time"
+        nil
+      end
+    end
+
+    sig { params(timing: Timing).returns(Timing) }
+    def consume_timing(timing)
+      @loaded_timing_hash.delete(timing.name)
+
+      stable_matches = @stable_timing_hash.fetch(timing.identity, [])
+      stable_matches.delete(timing)
+      @stable_timing_hash.delete(timing.identity) if stable_matches.empty?
+
+      timing
+    end
+
+    sig do
+      params(selected_ids: T::Array[String], all_ids: T::Array[String])
+        .returns(T::Array[String])
+    end
+    def compact_selectors_for_file(selected_ids, all_ids)
+      selected_ids = selected_ids.uniq.sort_by { scoped_id_sort_key(_1) }
+      all_ids = all_ids.uniq.sort_by { scoped_id_sort_key(_1) }
+
+      return [] if selected_ids == all_ids
+
+      tree = build_selector_tree(all_ids, selected_ids.to_h { [_1, true] })
+
+      compact_subtree_selectors(tree, nil)
+    end
+
+    sig { params(ids: T::Array[String], selected_lookup: T::Hash[String, T::Boolean]).returns(SelectorNode) }
+    def build_selector_tree(ids, selected_lookup)
+      root = T.let({ children: {}, total_count: 0, selected_count: 0 }, SelectorNode)
+
+      ids.each do |id|
+        current = root
+        current[:total_count] = T.must(current[:total_count]) + 1
+        current[:selected_count] = T.must(current[:selected_count]) + (selected_lookup.key?(id) ? 1 : 0)
+
+        id.split(":").each do |segment|
+          children = T.cast(current[:children], T::Hash[String, SelectorNode])
+          child = children[segment] ||= {
+            children: {},
+            total_count: 0,
+            selected_count: 0
+          }
+          child[:total_count] = T.must(child[:total_count]) + 1
+          child[:selected_count] = T.must(child[:selected_count]) + (selected_lookup.key?(id) ? 1 : 0)
+          current = child
+        end
+      end
+
+      root
+    end
+
+    sig { params(node: SelectorNode, prefix: T.nilable(String)).returns(T::Array[String]) }
+    def compact_subtree_selectors(node, prefix)
+      selected_count = T.must(node[:selected_count])
+      return [] if selected_count.zero?
+
+      total_count = T.must(node[:total_count])
+      children = T.cast(node[:children], T::Hash[String, SelectorNode])
+      return [T.must(prefix)] if !prefix.nil? && children.empty?
+
+      child_selectors = children.keys.sort_by { scoped_id_sort_key(_1) }.flat_map do |segment|
+        child_prefix = prefix.nil? ? segment : "#{prefix}:#{segment}"
+        compact_subtree_selectors(T.must(children[segment]), child_prefix)
+      end
+
+      return child_selectors if prefix.nil? || selected_count != total_count
+
+      compressed = [prefix]
+      if rendered_selector_length(compressed) <= rendered_selector_length(child_selectors)
+        compressed
+      else
+        child_selectors
+      end
+    end
+
+    sig { params(ids: T::Array[String]).returns(Integer) }
+    def rendered_selector_length(ids)
+      ids.join(",").length
+    end
+
+    sig { params(scoped_id: String).returns(T::Array[Integer]) }
+    def scoped_id_sort_key(scoped_id)
+      scoped_id.split(":").map(&:to_i)
     end
   end
 end
