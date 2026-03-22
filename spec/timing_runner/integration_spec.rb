@@ -26,6 +26,10 @@ RSpec.describe "timing runner integration" do
     [stdout, stderr]
   end
 
+  def run_bundle_command_allow_failure(*command, chdir:)
+    Open3.capture3(bundle_env, *command, chdir:)
+  end
+
   def read_labels(path)
     return [] unless File.exist?(path)
 
@@ -127,10 +131,10 @@ RSpec.describe "timing runner integration" do
     File.write(File.join(dir, "spec", "usage_spec.rb"), content)
   end
 
-  def capture_timings!(dir, timing_output_path)
+  def capture_timings!(dir, timing_output_path, expected_count: 4)
     run_bundle_command("bundle", "exec", "rspec", chdir: dir)
     expect(File.exist?(timing_output_path)).to eq(true)
-    expect(TimingRunner::Timings.parse_from_file(timing_output_path).timings.length).to eq(4)
+    expect(TimingRunner::Timings.parse_from_file(timing_output_path).timings.length).to eq(expected_count)
   end
 
   def run_shard!(dir, input_file:, runner:, results_path:)
@@ -195,6 +199,21 @@ RSpec.describe "timing runner integration" do
     RUBY
   end
 
+  def fail_after_capture_usage_spec(results_path)
+    <<~RUBY
+      RSpec.describe "exit status parity" do
+        def record(label)
+          File.open(#{results_path.inspect}, "a") { |file| file.puts(label) }
+        end
+
+        it "will fail on rerun" do
+          record("will fail on rerun")
+          expect(false).to eq(true)
+        end
+      end
+    RUBY
+  end
+
   it "covers the user workflow of capturing timings and then running shards from them" do
     Dir.mktmpdir do |dir|
       results_path = File.join(dir, "results.log")
@@ -253,6 +272,40 @@ RSpec.describe "timing runner integration" do
 
       expect(dry_run_output).to include("spec/usage_spec.rb[1:2]")
       expect(dry_run_output).not_to include("spec/usage_spec.rb[1:2:1,1:2:2]")
+    end
+  end
+
+  it "returns the rspec exit status for the selected shard" do
+    Dir.mktmpdir do |dir|
+      results_path = File.join(dir, "results.log")
+      captured_timings = File.join(dir, "captured.log")
+
+      write_rspec_config(dir, captured_timings)
+      write_spec(dir, <<~RUBY)
+        RSpec.describe "exit status parity" do
+          def record(label)
+            File.open(#{results_path.inspect}, "a") { |file| file.puts(label) }
+          end
+
+          it "will fail on rerun" do
+            record("will fail on rerun")
+            expect(true).to eq(true)
+          end
+        end
+      RUBY
+
+      capture_timings!(dir, captured_timings, expected_count: 1)
+      write_spec(dir, fail_after_capture_usage_spec(results_path))
+
+      _stdout, _stderr, status = run_bundle_command_allow_failure(
+        "bundle", "exec", "timing-runner",
+        "--input-file", captured_timings,
+        "--num-runners", "1",
+        "--runner", "1",
+        chdir: dir
+      )
+
+      expect(status.exitstatus).to eq(1)
     end
   end
 end

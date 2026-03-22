@@ -2,6 +2,7 @@
 
 require "open3"
 require "rspec"
+require "shellwords"
 
 def bm(label)
   return yield unless ENV["BENCHMARK"]
@@ -61,37 +62,38 @@ module TimingRunner
       end
     end
 
-    sig { void }
+    sig { returns(Integer) }
     def run
       files = files_for(config.runner)
-
-      cmd = ["bundle exec rspec", *Array(config.rspec_args), *files]
-        .reject { |part| part.nil? || part.empty? }
-        .join(" ")
+      command = rspec_command(files)
+      display_command = format_command_for_display(command)
 
       if config.dry_run
         puts "Dry run requested:"
 
         puts <<~EOF
                Would run
-                 #{cmd}
+                 #{display_command}
 
-                 Length: #{cmd.length}
+                 Length: #{display_command.length}
              EOF
 
-        return
+        return 0
       end
 
-      # TODO: maybe we can run RSpec directly instead of shelling out? I tried
-      # it once but it ended up running all the specs twice and i'm not sure why
-
-      stdin, stdout, stderr, wait_thr = Open3.popen3(cmd)
+      stdin, stdout, stderr, wait_thr = Open3.popen3(*command)
       stdin.close
-      stdout.each { |l| puts l }
-      stderr.each { |l| STDERR.puts l }
-      wait_thr.join
+
+      stdout_thread = Thread.new { stdout.each { |line| $stdout.print(line) } }
+      stderr_thread = Thread.new { stderr.each { |line| STDERR.print(line) } }
+
+      status = wait_thr.value
+      stdout_thread.join
+      stderr_thread.join
       stdout.close
       stderr.close
+
+      status.exitstatus
     end
 
     sig { params(runner: Integer).returns(T::Array[String]) }
@@ -106,9 +108,9 @@ module TimingRunner
         )
 
         if selectors.empty?
-          "'#{file_name}'"
+          file_name
         else
-          "'#{file_name}[#{selectors.join(",")}]'"
+          "#{file_name}[#{selectors.join(",")}]"
         end
       end
     end
@@ -228,6 +230,45 @@ module TimingRunner
       @stable_timing_hash.delete(timing.identity) if stable_matches.empty?
 
       timing
+    end
+
+    sig { params(files: T::Array[String]).returns(T::Array[String]) }
+    def rspec_command(files)
+      args = rspec_args
+      args << "--color" if add_color_arg?(args)
+
+      ["bundle", "exec", "rspec", *args, *files]
+    end
+
+    sig { returns(T::Array[String]) }
+    def rspec_args
+      raw_args = config.rspec_args
+      return raw_args.reject(&:empty?) if raw_args.is_a?(Array)
+      return [] if raw_args.empty?
+
+      Shellwords.split(raw_args)
+    end
+
+    sig { params(args: T::Array[String]).returns(T::Boolean) }
+    def add_color_arg?(args)
+      return false unless $stdout.tty?
+
+      args.none? do |arg|
+        arg == "--color" || arg == "--no-color" ||
+          arg.start_with?("--color=") || arg.start_with?("--colour")
+      end
+    end
+
+    sig { params(command: T::Array[String]).returns(String) }
+    def format_command_for_display(command)
+      command.map { format_arg_for_display(_1) }.join(" ")
+    end
+
+    sig { params(arg: String).returns(String) }
+    def format_arg_for_display(arg)
+      return "'#{arg}'" if arg.include?("[") || arg.include?("]")
+
+      Shellwords.escape(arg)
     end
 
     sig do

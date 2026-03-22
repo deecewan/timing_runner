@@ -47,7 +47,7 @@ RSpec.describe TimingRunner::Runner do
       )
 
       expect(runner.files_for(2)).to eq(
-        ["'spec/a_spec.rb'", "'spec/b_spec.rb'"]
+        ["spec/a_spec.rb", "spec/b_spec.rb"]
       )
     end
 
@@ -73,7 +73,7 @@ RSpec.describe TimingRunner::Runner do
         ]
       )
 
-      expect(runner.files_for(1)).to eq(["'spec/a_spec.rb[1:1,1:2:2]'"])
+      expect(runner.files_for(1)).to eq(["spec/a_spec.rb[1:1,1:2:2]"])
     end
 
     it "keeps selectors in a stable numeric order" do
@@ -96,7 +96,7 @@ RSpec.describe TimingRunner::Runner do
         ]
       )
 
-      expect(runner.files_for(1)).to eq(["'spec/a_spec.rb[1:2,1:10]'"])
+      expect(runner.files_for(1)).to eq(["spec/a_spec.rb[1:2,1:10]"])
     end
   end
 
@@ -110,13 +110,15 @@ RSpec.describe TimingRunner::Runner do
         dry_run: true
       )
       allow(runner).to receive(:config).and_return(config)
+      allow($stdout).to receive(:tty?).and_return(false)
 
-      allow(runner).to receive(:files_for).with(2).and_return(["'spec/a_spec.rb[1:1]'"])
+      allow(runner).to receive(:files_for).with(2).and_return(["spec/a_spec.rb[1:1]"])
 
-      expect { runner.run }.to output(/bundle exec rspec --tag focus 'spec\/a_spec\.rb\[1:1\]'/).to_stdout
+      expect { expect(runner.run).to eq(0) }
+        .to output(/bundle exec rspec --tag focus 'spec\/a_spec\.rb\[1:1\]'/).to_stdout
     end
 
-    it "streams stdout and stderr from rspec execution" do
+    it "streams stdout and stderr from rspec execution and returns the exit code" do
       runner = described_class.allocate
       config = instance_double(
         TimingRunner::Config,
@@ -125,20 +127,72 @@ RSpec.describe TimingRunner::Runner do
         dry_run: false
       )
       allow(runner).to receive(:config).and_return(config)
+      allow($stdout).to receive(:tty?).and_return(false)
 
       stdin = StringIO.new
       stdout = StringIO.new("example output\n")
       stderr = StringIO.new("warning output\n")
-      wait_thr = instance_double(Process::Waiter, join: true)
+      status = instance_double(Process::Status, exitstatus: 7)
+      wait_thr = instance_double(Process::Waiter, value: status)
 
-      allow(runner).to receive(:files_for).with(1).and_return(["'spec/a_spec.rb[1:1]'"])
-      allow(STDERR).to receive(:puts)
+      allow(runner).to receive(:files_for).with(1).and_return(["spec/a_spec.rb[1:1]"])
+      allow(STDERR).to receive(:print)
       allow(Open3).to receive(:popen3)
-        .with("bundle exec rspec 'spec/a_spec.rb[1:1]'")
+        .with("bundle", "exec", "rspec", "spec/a_spec.rb[1:1]")
         .and_return([stdin, stdout, stderr, wait_thr])
 
-      expect { runner.run }.to output("example output\n").to_stdout
-      expect(STDERR).to have_received(:puts).with("warning output\n")
+      expect { expect(runner.run).to eq(7) }.to output("example output\n").to_stdout
+      expect(STDERR).to have_received(:print).with("warning output\n")
+    end
+
+    it "adds --color when stdout is a tty and no color option was provided" do
+      runner = described_class.allocate
+      config = instance_double(
+        TimingRunner::Config,
+        runner: 1,
+        rspec_args: [],
+        dry_run: false
+      )
+      allow(runner).to receive(:config).and_return(config)
+      allow($stdout).to receive(:tty?).and_return(true)
+
+      stdin = StringIO.new
+      stdout = StringIO.new
+      stderr = StringIO.new
+      status = instance_double(Process::Status, exitstatus: 0)
+      wait_thr = instance_double(Process::Waiter, value: status)
+
+      allow(runner).to receive(:files_for).with(1).and_return(["spec/a_spec.rb[1:1]"])
+      allow(Open3).to receive(:popen3)
+        .with("bundle", "exec", "rspec", "--color", "spec/a_spec.rb[1:1]")
+        .and_return([stdin, stdout, stderr, wait_thr])
+
+      expect(runner.run).to eq(0)
+    end
+
+    it "does not override an explicit no-color option" do
+      runner = described_class.allocate
+      config = instance_double(
+        TimingRunner::Config,
+        runner: 1,
+        rspec_args: ["--no-color"],
+        dry_run: false
+      )
+      allow(runner).to receive(:config).and_return(config)
+      allow($stdout).to receive(:tty?).and_return(true)
+
+      stdin = StringIO.new
+      stdout = StringIO.new
+      stderr = StringIO.new
+      status = instance_double(Process::Status, exitstatus: 0)
+      wait_thr = instance_double(Process::Waiter, value: status)
+
+      allow(runner).to receive(:files_for).with(1).and_return(["spec/a_spec.rb[1:1]"])
+      allow(Open3).to receive(:popen3)
+        .with("bundle", "exec", "rspec", "--no-color", "spec/a_spec.rb[1:1]")
+        .and_return([stdin, stdout, stderr, wait_thr])
+
+      expect(runner.run).to eq(0)
     end
   end
 
