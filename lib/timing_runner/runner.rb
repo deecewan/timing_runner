@@ -8,9 +8,7 @@ def bm(label)
   return yield unless ENV["BENCHMARK"]
 
   require "benchmark"
-  res = Benchmark.measure do
-    yield
-  end
+  res = Benchmark.measure { yield }
 
   puts "#{label}: #{res.real}"
 end
@@ -34,31 +32,22 @@ module TimingRunner
       @config = config
       @timing_hash = T.let({}, T::Hash[String, Timing])
       @loaded_timing_hash = T.let({}, T::Hash[String, Timing])
-      @stable_timing_hash = T.let(
-        Hash.new { |hash, key| hash[key] = [] },
-        T::Hash[String, T::Array[Timing]]
-      )
+      @stable_timing_hash =
+        T.let(
+          Hash.new { |hash, key| hash[key] = [] },
+          T::Hash[String, T::Array[Timing]]
+        )
 
-      bm("initialize_timings") do
-        initialize_timings(config.input_file)
-      end
+      bm("initialize_timings") { initialize_timings(config.input_file) }
 
-      bm("load_spec_files") do
-        load_spec_files
-      end
+      bm("load_spec_files") { load_spec_files }
 
-      bm("add_location_to_timings") do
-        add_location_to_timings
-      end
+      bm("add_location_to_timings") { add_location_to_timings }
 
-      bm("validate_timings") do
-        validate_timings
-      end
+      bm("validate_timings") { validate_timings }
 
       bm("Partitioner.new") do
-        @partitioner = Partitioner.new(
-          timing_hash.values, config.num_runners
-        )
+        @partitioner = Partitioner.new(timing_hash.values, config.num_runners)
       end
     end
 
@@ -101,18 +90,18 @@ module TimingRunner
       partition = partitioner.partition_for_group(runner)
       all_timings_by_file = timing_hash.values.group_by { T.must(_1.file) }
 
-      partition.group_by { |timing| T.must(timing.file) }.sort_by(&:first).map do |(file_name, timings)|
-        selectors = compact_selectors_for_file(
-          timings.map { T.must(_1.id) },
-          T.must(all_timings_by_file[file_name]).map { T.must(_1.id) }
-        )
+      partition
+        .group_by { |timing| T.must(timing.file) }
+        .sort_by(&:first)
+        .map do |(file_name, timings)|
+          selectors =
+            compact_selectors_for_file(
+              timings.map { T.must(_1.id) },
+              T.must(all_timings_by_file[file_name]).map { T.must(_1.id) }
+            )
 
-        if selectors.empty?
-          file_name
-        else
-          "#{file_name}[#{selectors.join(",")}]"
+          selectors.empty? ? file_name : "#{file_name}[#{selectors.join(",")}]"
         end
-      end
     end
 
     private
@@ -142,7 +131,9 @@ module TimingRunner
     def average_time
       return @average_time if defined?(@average_time)
 
-      @average_time = @loaded_timing_hash.values.sum(&:time).to_f / @loaded_timing_hash.values.length
+      @average_time =
+        @loaded_timing_hash.values.sum(&:time).to_f /
+          @loaded_timing_hash.values.length
       # we need this to be slightly above 0 so that `array.min` returns different values
       @average_time = 0.0001 if @average_time.nan?
 
@@ -163,7 +154,8 @@ module TimingRunner
       config = RSpec.configuration
       options = RSpec::Core::ConfigurationOptions.new(rspec_args)
       options.configure(config)
-      files_or_directories = config.instance_variable_get(:@files_or_directories_to_run)
+      files_or_directories =
+        config.instance_variable_get(:@files_or_directories_to_run)
       if files_or_directories.nil? || files_or_directories.empty?
         config.files_or_directories_to_run = [config.default_path]
       end
@@ -193,15 +185,17 @@ module TimingRunner
       historical_timing = historical_timing_for(example)
       metadata = example.metadata
 
-      Timing.for(
-        example.full_description,
-        historical_timing&.time || average_time,
-        stable_key: Identity.for_example(example)
-      ).tap do |timing|
-        timing.file = metadata[:rerun_file_path]
-        timing.line = metadata[:line_number]
-        timing.id = metadata[:scoped_id]
-      end
+      Timing
+        .for(
+          example.full_description,
+          historical_timing&.time || average_time,
+          stable_key: Identity.for_example(example)
+        )
+        .tap do |timing|
+          timing.file = metadata[:rerun_file_path]
+          timing.line = metadata[:line_number]
+          timing.id = metadata[:scoped_id]
+        end
     end
 
     sig { params(example: T.untyped).returns(T.nilable(Timing)) }
@@ -274,8 +268,9 @@ module TimingRunner
     end
 
     sig do
-      params(selected_ids: T::Array[String], all_ids: T::Array[String])
-        .returns(T::Array[String])
+      params(selected_ids: T::Array[String], all_ids: T::Array[String]).returns(
+        T::Array[String]
+      )
     end
     def compact_selectors_for_file(selected_ids, all_ids)
       selected_ids = selected_ids.uniq.sort_by { scoped_id_sort_key(_1) }
@@ -288,32 +283,48 @@ module TimingRunner
       compact_subtree_selectors(tree, nil)
     end
 
-    sig { params(ids: T::Array[String], selected_lookup: T::Hash[String, T::Boolean]).returns(SelectorNode) }
+    sig do
+      params(
+        ids: T::Array[String],
+        selected_lookup: T::Hash[String, T::Boolean]
+      ).returns(SelectorNode)
+    end
     def build_selector_tree(ids, selected_lookup)
-      root = T.let({ children: {}, total_count: 0, selected_count: 0 }, SelectorNode)
+      root =
+        T.let({ children: {}, total_count: 0, selected_count: 0 }, SelectorNode)
 
       ids.each do |id|
         current = root
         current[:total_count] = T.must(current[:total_count]) + 1
-        current[:selected_count] = T.must(current[:selected_count]) + (selected_lookup.key?(id) ? 1 : 0)
+        current[:selected_count] = T.must(current[:selected_count]) +
+          (selected_lookup.key?(id) ? 1 : 0)
 
-        id.split(":").each do |segment|
-          children = T.cast(current[:children], T::Hash[String, SelectorNode])
-          child = children[segment] ||= {
-            children: {},
-            total_count: 0,
-            selected_count: 0
-          }
-          child[:total_count] = T.must(child[:total_count]) + 1
-          child[:selected_count] = T.must(child[:selected_count]) + (selected_lookup.key?(id) ? 1 : 0)
-          current = child
-        end
+        id
+          .split(":")
+          .each do |segment|
+            children = T.cast(current[:children], T::Hash[String, SelectorNode])
+            child =
+              children[segment] ||= {
+                children: {
+                },
+                total_count: 0,
+                selected_count: 0
+              }
+            child[:total_count] = T.must(child[:total_count]) + 1
+            child[:selected_count] = T.must(child[:selected_count]) +
+              (selected_lookup.key?(id) ? 1 : 0)
+            current = child
+          end
       end
 
       root
     end
 
-    sig { params(node: SelectorNode, prefix: T.nilable(String)).returns(T::Array[String]) }
+    sig do
+      params(node: SelectorNode, prefix: T.nilable(String)).returns(
+        T::Array[String]
+      )
+    end
     def compact_subtree_selectors(node, prefix)
       selected_count = T.must(node[:selected_count])
       return [] if selected_count.zero?
@@ -322,15 +333,20 @@ module TimingRunner
       children = T.cast(node[:children], T::Hash[String, SelectorNode])
       return [T.must(prefix)] if !prefix.nil? && children.empty?
 
-      child_selectors = children.keys.sort_by { scoped_id_sort_key(_1) }.flat_map do |segment|
-        child_prefix = prefix.nil? ? segment : "#{prefix}:#{segment}"
-        compact_subtree_selectors(T.must(children[segment]), child_prefix)
-      end
+      child_selectors =
+        children
+          .keys
+          .sort_by { scoped_id_sort_key(_1) }
+          .flat_map do |segment|
+            child_prefix = prefix.nil? ? segment : "#{prefix}:#{segment}"
+            compact_subtree_selectors(T.must(children[segment]), child_prefix)
+          end
 
       return child_selectors if prefix.nil? || selected_count != total_count
 
       compressed = [prefix]
-      if rendered_selector_length(compressed) <= rendered_selector_length(child_selectors)
+      if rendered_selector_length(compressed) <=
+           rendered_selector_length(child_selectors)
         compressed
       else
         child_selectors
