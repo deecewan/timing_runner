@@ -151,8 +151,8 @@ module TimingRunner
 
     sig { void }
     def add_location_to_timings
-      RSpec.world.example_groups.map do |group|
-        group.descendants.map { _1.examples }.flatten.each do |example|
+      RSpec.world.example_groups.each do |group|
+        group.descendant_filtered_examples.each do |example|
           timing_hash[example.full_description] = timing_for_example(example)
         end
       end
@@ -161,10 +161,12 @@ module TimingRunner
     sig { void }
     def load_spec_files
       config = RSpec.configuration
-      options = RSpec::Core::ConfigurationOptions.new([])
+      options = RSpec::Core::ConfigurationOptions.new(rspec_args)
       options.configure(config)
-      config.files_or_directories_to_run = [config.default_path]
-
+      files_or_directories = config.instance_variable_get(:@files_or_directories_to_run)
+      if files_or_directories.nil? || files_or_directories.empty?
+        config.files_or_directories_to_run = [config.default_path]
+      end
       config.load_spec_files
     end
 

@@ -214,6 +214,34 @@ RSpec.describe "timing runner integration" do
     RUBY
   end
 
+  def tagged_usage_spec(results_path)
+    <<~RUBY
+      RSpec.describe "tag filtered sharding" do
+        def record(label)
+          File.open(#{results_path.inspect}, "a") { |file| file.puts(label) }
+        end
+
+        it "regular example" do
+          sleep 0.20
+          record("regular example")
+          expect(true).to eq(true)
+        end
+
+        it "release example", :release do
+          sleep 0.30
+          record("release example")
+          expect(true).to eq(true)
+        end
+
+        it "second regular example" do
+          sleep 0.10
+          record("second regular example")
+          expect(true).to eq(true)
+        end
+      end
+    RUBY
+  end
+
   it "covers the user workflow of capturing timings and then running shards from them" do
     Dir.mktmpdir do |dir|
       results_path = File.join(dir, "results.log")
@@ -306,6 +334,80 @@ RSpec.describe "timing runner integration" do
       )
 
       expect(status.exitstatus).to eq(1)
+    end
+  end
+
+  it "filters partitioned examples using rspec tag arguments" do
+    Dir.mktmpdir do |dir|
+      results_path = File.join(dir, "results.log")
+      captured_timings = File.join(dir, "captured.log")
+      rerun_timings = File.join(dir, "rerun.log")
+
+      write_rspec_config(dir, captured_timings)
+      write_spec(dir, tagged_usage_spec(results_path))
+
+      capture_timings!(dir, captured_timings, expected_count: 3)
+
+      write_rspec_config(dir, rerun_timings)
+      clear_file(results_path)
+      run_bundle_command(
+        "bundle", "exec", "timing-runner",
+        "--input-file", captured_timings,
+        "--num-runners", "1",
+        "--runner", "1",
+        "--", "--tag", "~release",
+        chdir: dir
+      )
+
+      expect(read_labels(results_path)).to contain_exactly("regular example", "second regular example")
+    end
+  end
+
+  it "filters partitioned examples using rspec file arguments" do
+    Dir.mktmpdir do |dir|
+      captured_timings = File.join(dir, "captured.log")
+      rerun_timings = File.join(dir, "rerun.log")
+      results_path = File.join(dir, "results.log")
+
+      write_rspec_config(dir, captured_timings)
+      FileUtils.mkdir_p(File.join(dir, "spec"))
+      File.write(
+        File.join(dir, "spec", "alpha_spec.rb"),
+        <<~RUBY
+          RSpec.describe "alpha file" do
+            it "alpha example" do
+              File.open(#{results_path.inspect}, "a") { |file| file.puts("alpha example") }
+              expect(true).to eq(true)
+            end
+          end
+        RUBY
+      )
+      File.write(
+        File.join(dir, "spec", "beta_spec.rb"),
+        <<~RUBY
+          RSpec.describe "beta file" do
+            it "beta example" do
+              File.open(#{results_path.inspect}, "a") { |file| file.puts("beta example") }
+              expect(true).to eq(true)
+            end
+          end
+        RUBY
+      )
+
+      capture_timings!(dir, captured_timings, expected_count: 2)
+
+      write_rspec_config(dir, rerun_timings)
+      clear_file(results_path)
+      run_bundle_command(
+        "bundle", "exec", "timing-runner",
+        "--input-file", captured_timings,
+        "--num-runners", "1",
+        "--runner", "1",
+        "--", "spec/alpha_spec.rb",
+        chdir: dir
+      )
+
+      expect(read_labels(results_path)).to eq(["alpha example"])
     end
   end
 end

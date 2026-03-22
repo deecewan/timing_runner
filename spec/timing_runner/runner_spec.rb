@@ -241,8 +241,7 @@ RSpec.describe TimingRunner::Runner do
         full_description: "new example",
         metadata: { rerun_file_path: "spec/new_spec.rb", line_number: 20, scoped_id: "1:2" }
       )
-      descendant = instance_double("ExampleGroupDescendant", examples: [known_example, new_example])
-      group = instance_double("ExampleGroup", descendants: [descendant])
+      group = instance_double("ExampleGroup", descendant_filtered_examples: [known_example, new_example])
       world = instance_double("RSpecWorld", example_groups: [group])
 
       allow(RSpec).to receive(:world).and_return(world)
@@ -273,7 +272,7 @@ RSpec.describe TimingRunner::Runner do
         full_description: new_name,
         metadata: { rerun_file_path: "spec/dynamic_spec.rb", line_number: 42, scoped_id: "1:4" }
       )
-      group = instance_double("ExampleGroup", descendants: [instance_double("Descendant", examples: [example])])
+      group = instance_double("ExampleGroup", descendant_filtered_examples: [example])
       world = instance_double("RSpecWorld", example_groups: [group])
       allow(RSpec).to receive(:world).and_return(world)
 
@@ -301,7 +300,7 @@ RSpec.describe TimingRunner::Runner do
         full_description: "dynamic #<Object:0x0000ffff>",
         metadata: { rerun_file_path: "spec/dynamic_spec.rb", line_number: 42, scoped_id: "1:4" }
       )
-      group = instance_double("ExampleGroup", descendants: [instance_double("Descendant", examples: [example])])
+      group = instance_double("ExampleGroup", descendant_filtered_examples: [example])
       world = instance_double("RSpecWorld", example_groups: [group])
       allow(RSpec).to receive(:world).and_return(world)
 
@@ -328,7 +327,7 @@ RSpec.describe TimingRunner::Runner do
           timing_runner_key: "serialize-user"
         }
       )
-      group = instance_double("ExampleGroup", descendants: [instance_double("Descendant", examples: [example])])
+      group = instance_double("ExampleGroup", descendant_filtered_examples: [example])
       world = instance_double("RSpecWorld", example_groups: [group])
       allow(RSpec).to receive(:world).and_return(world)
 
@@ -366,21 +365,51 @@ RSpec.describe TimingRunner::Runner do
   end
 
   describe "#load_spec_files" do
-    it "configures rspec to load the default spec path" do
+    it "configures rspec with the user's rspec args before loading files" do
       runner = described_class.allocate
+      config_double = instance_double(TimingRunner::Config, rspec_args: ["--tag", "~release", "spec/models"])
+      allow(runner).to receive(:config).and_return(config_double)
       config = RSpec.configuration
       options = instance_double(RSpec::Core::ConfigurationOptions)
 
       allow(RSpec).to receive(:configuration).and_return(config)
-      allow(RSpec::Core::ConfigurationOptions).to receive(:new).with([]).and_return(options)
+      allow(RSpec::Core::ConfigurationOptions).to receive(:new)
+        .with(["--tag", "~release", "spec/models"])
+        .and_return(options)
       allow(options).to receive(:configure).with(config)
-      allow(config).to receive(:files_or_directories_to_run=).with([config.default_path])
+      allow(config).to receive(:instance_variable_get)
+        .with(:@files_or_directories_to_run)
+        .and_return(["spec/models"])
       allow(config).to receive(:load_spec_files)
 
       runner.send(:load_spec_files)
 
       expect(options).to have_received(:configure).with(config)
-      expect(config).to have_received(:files_or_directories_to_run=).with([config.default_path])
+      expect(config).to have_received(:load_spec_files)
+    end
+
+    it "falls back to the default path when rspec args do not specify files" do
+      runner = described_class.allocate
+      config_double = instance_double(TimingRunner::Config, rspec_args: ["--tag", "~release"])
+      allow(runner).to receive(:config).and_return(config_double)
+      config = RSpec.configuration
+      options = instance_double(RSpec::Core::ConfigurationOptions)
+
+      allow(RSpec).to receive(:configuration).and_return(config)
+      allow(RSpec::Core::ConfigurationOptions).to receive(:new)
+        .with(["--tag", "~release"])
+        .and_return(options)
+      allow(options).to receive(:configure).with(config)
+      allow(config).to receive(:instance_variable_get)
+        .with(:@files_or_directories_to_run)
+        .and_return([])
+      allow(config).to receive(:default_path).and_return("spec")
+      allow(config).to receive(:files_or_directories_to_run=).with(["spec"])
+      allow(config).to receive(:load_spec_files)
+
+      runner.send(:load_spec_files)
+
+      expect(config).to have_received(:files_or_directories_to_run=).with(["spec"])
       expect(config).to have_received(:load_spec_files)
     end
   end
