@@ -35,6 +35,15 @@ The runner will read from `input-file` to get the timing data.
 > specified in `.rspec`! RSpec truncates that file, so you will lose your timing
 > data
 
+To verify that a timing file covers every currently selected example, run:
+
+```
+bundle exec timing-runner verify --input-file <file> -- <rspec options>
+```
+
+This uses the same RSpec filtering rules as the runner itself, so tags, file
+arguments, and other RSpec selectors are applied before coverage is checked.
+
 ## Configuration
 
 Check the options with `bundle exec timing-runner --help`.

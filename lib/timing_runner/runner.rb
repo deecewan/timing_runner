@@ -156,6 +156,7 @@ module TimingRunner
       options.configure(config)
       files_or_directories =
         config.instance_variable_get(:@files_or_directories_to_run)
+      debugger
       if files_or_directories.nil? || files_or_directories.empty?
         config.files_or_directories_to_run = [config.default_path]
       end
@@ -262,9 +263,14 @@ module TimingRunner
 
     sig { params(arg: String).returns(String) }
     def format_arg_for_display(arg)
-      return "'#{arg}'" if arg.include?("[") || arg.include?("]")
+      return arg if arg.match?(%r{\A[a-zA-Z0-9_/.\-]+\z})
 
-      Shellwords.escape(arg)
+      shell_single_quote(arg)
+    end
+
+    sig { params(arg: String).returns(String) }
+    def shell_single_quote(arg)
+      "'#{arg.gsub("'", %q('"'"'))}'"
     end
 
     sig do

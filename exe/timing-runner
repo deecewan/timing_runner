@@ -4,6 +4,14 @@
 
 require "timing_runner"
 
+if ARGV.first == "verify"
+  ARGV.shift
+  config = TimingRunner::VerifyConfig.load!
+  verifier = TimingRunner::Verifier.new(config)
+
+  exit(verifier.run)
+end
+
 config = TimingRunner::Config.load!
 runner = TimingRunner::Runner.new(config)
 

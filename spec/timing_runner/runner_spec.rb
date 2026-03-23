@@ -118,6 +118,23 @@ RSpec.describe TimingRunner::Runner do
         .to output(/bundle exec rspec --tag focus 'spec\/a_spec\.rb\[1:1\]'/).to_stdout
     end
 
+    it "quotes zsh-sensitive tag exclusion values clearly in dry-run mode" do
+      runner = described_class.allocate
+      config = instance_double(
+        TimingRunner::Config,
+        runner: 2,
+        rspec_args: ["--tag", "~type:feature"],
+        dry_run: true
+      )
+      allow(runner).to receive(:config).and_return(config)
+      allow($stdout).to receive(:tty?).and_return(false)
+
+      allow(runner).to receive(:files_for).with(2).and_return(["spec/a_spec.rb[1:1]"])
+
+      expect { expect(runner.run).to eq(0) }
+        .to output(/bundle exec rspec --tag '~type:feature' 'spec\/a_spec\.rb\[1:1\]'/).to_stdout
+    end
+
     it "streams stdout and stderr from rspec execution and returns the exit code" do
       runner = described_class.allocate
       config = instance_double(

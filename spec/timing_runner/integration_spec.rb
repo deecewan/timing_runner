@@ -137,6 +137,12 @@ RSpec.describe "timing runner integration" do
     expect(TimingRunner::Timings.parse_from_file(timing_output_path).timings.length).to eq(expected_count)
   end
 
+  def capture_timings_with_args!(dir, timing_output_path, expected_count:, rspec_args:)
+    run_bundle_command("bundle", "exec", "rspec", *rspec_args, chdir: dir)
+    expect(File.exist?(timing_output_path)).to eq(true)
+    expect(TimingRunner::Timings.parse_from_file(timing_output_path).timings.length).to eq(expected_count)
+  end
+
   def run_shard!(dir, input_file:, runner:, results_path:)
     clear_file(results_path)
     run_bundle_command(
@@ -159,6 +165,15 @@ RSpec.describe "timing runner integration" do
       chdir: dir
     )
     stdout
+  end
+
+  def verify_suite_allow_failure(dir, input_file:, rspec_args: [])
+    run_bundle_command_allow_failure(
+      "bundle", "exec", "timing-runner", "verify",
+      "--input-file", input_file,
+      "--", *rspec_args,
+      chdir: dir
+    )
   end
 
   def grouped_usage_spec(results_path)
@@ -408,6 +423,126 @@ RSpec.describe "timing runner integration" do
       )
 
       expect(read_labels(results_path)).to eq(["alpha example"])
+    end
+  end
+
+  it "verifies that a captured timing file covers the current suite" do
+    Dir.mktmpdir do |dir|
+      results_path = File.join(dir, "results.log")
+      captured_timings = File.join(dir, "captured.log")
+
+      write_rspec_config(dir, captured_timings)
+      write_spec(dir, static_usage_spec(results_path))
+
+      capture_timings!(dir, captured_timings)
+
+      stdout, stderr, status = verify_suite_allow_failure(dir, input_file: captured_timings)
+
+      expect(status.exitstatus).to eq(0)
+      expect(stdout).to include("Verification passed: 4 selected examples are covered")
+      expect(stderr).to eq("")
+    end
+  end
+
+  it "verifies timing coverage using the same rspec tag filters as the shard runner" do
+    Dir.mktmpdir do |dir|
+      results_path = File.join(dir, "results.log")
+      captured_timings = File.join(dir, "captured.log")
+
+      write_rspec_config(dir, captured_timings)
+      write_spec(dir, tagged_usage_spec(results_path))
+
+      capture_timings_with_args!(
+        dir,
+        captured_timings,
+        expected_count: 2,
+        rspec_args: ["--tag", "~release"]
+      )
+
+      stdout, stderr, status =
+        verify_suite_allow_failure(
+          dir,
+          input_file: captured_timings,
+          rspec_args: ["--tag", "~release"]
+        )
+
+      expect(status.exitstatus).to eq(0)
+      expect(stdout).to include("Verification passed: 2 selected examples are covered")
+      expect(stderr).to eq("")
+    end
+  end
+
+  it "fails verification when the timing file does not cover the selected examples" do
+    Dir.mktmpdir do |dir|
+      results_path = File.join(dir, "results.log")
+      captured_timings = File.join(dir, "captured.log")
+
+      write_rspec_config(dir, captured_timings)
+      write_spec(dir, tagged_usage_spec(results_path))
+
+      capture_timings_with_args!(
+        dir,
+        captured_timings,
+        expected_count: 2,
+        rspec_args: ["--tag", "~release"]
+      )
+
+      stdout, stderr, status = verify_suite_allow_failure(dir, input_file: captured_timings)
+
+      expect(status.exitstatus).to eq(1)
+      expect(stdout).to eq("")
+      expect(stderr).to include("Verification failed: 1 selected examples are missing")
+      expect(stderr).to include("tag filtered sharding release example")
+    end
+  end
+
+  it "verifies timing coverage using rspec file arguments" do
+    Dir.mktmpdir do |dir|
+      captured_timings = File.join(dir, "captured.log")
+      results_path = File.join(dir, "results.log")
+
+      write_rspec_config(dir, captured_timings)
+      FileUtils.mkdir_p(File.join(dir, "spec"))
+      File.write(
+        File.join(dir, "spec", "alpha_spec.rb"),
+        <<~RUBY
+          RSpec.describe "alpha file" do
+            it "alpha example" do
+              File.open(#{results_path.inspect}, "a") { |file| file.puts("alpha example") }
+              expect(true).to eq(true)
+            end
+          end
+        RUBY
+      )
+      File.write(
+        File.join(dir, "spec", "beta_spec.rb"),
+        <<~RUBY
+          RSpec.describe "beta file" do
+            it "beta example" do
+              File.open(#{results_path.inspect}, "a") { |file| file.puts("beta example") }
+              expect(true).to eq(true)
+            end
+          end
+        RUBY
+      )
+
+      capture_timings_with_args!(
+        dir,
+        captured_timings,
+        expected_count: 1,
+        rspec_args: ["spec/alpha_spec.rb"]
+      )
+
+      stdout, stderr, status =
+        verify_suite_allow_failure(
+          dir,
+          input_file: captured_timings,
+          rspec_args: ["spec/alpha_spec.rb"]
+        )
+
+      expect(status.exitstatus).to eq(0)
+      expect(stdout).to include("Verification passed: 1 selected examples are covered")
+      expect(stderr).to eq("")
     end
   end
 end
